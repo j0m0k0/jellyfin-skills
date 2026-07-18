@@ -86,18 +86,27 @@ def is_relative_to(path: Path, root: Path) -> bool:
         return False
 
 
-def resolve_top_level_source(root: Path, source: str) -> Path:
-    """Resolve a mapping source while keeping it confined to the media root."""
+def require_path_within_root(path: Path, root: Path, description: str) -> None:
+    """Reject a path that resolves outside the resolved library root."""
+    if not is_relative_to(path.resolve(strict=False), root):
+        raise ValueError(f"{description} escapes the library root: {path}")
+
+
+def resolve_top_level_source(root: Path, source: object) -> Path:
+    """Validate a mapping source as a real, non-symlinked top-level entry."""
+    if not isinstance(source, str):
+        raise ValueError("Mapping source must be a string")
     source_path = Path(source)
-    if source_path.is_absolute():
+    if source_path.is_absolute() or "/" in source or "\\" in source:
         raise ValueError(f"Mapping source must be relative to the library root: {source!r}")
     if len(source_path.parts) != 1 or source_path.parts[0] in {"", ".", ".."}:
         raise ValueError(f"Mapping source must be a single top-level name: {source!r}")
 
-    resolved = (root / source_path).resolve(strict=False)
-    if not is_relative_to(resolved, root):
-        raise ValueError(f"Mapping source escapes the library root: {source!r}")
-    return resolved
+    candidate = root / source_path
+    if candidate.is_symlink():
+        raise ValueError(f"Mapping source must not be a symlink: {source!r}")
+    require_path_within_root(candidate, root, "Mapping source")
+    return candidate
 
 
 def add_move(moves: list[Move], src: Path, dst: Path, reason: str) -> None:
@@ -190,6 +199,7 @@ def plan_show_internal(folder: Path, canonical: str, moves: list[Move]) -> None:
 
 
 def plan(root: Path, items: list[dict], library_type: str) -> tuple[list[Move], list[str]]:
+    root = root.resolve()
     moves: list[Move] = []
     skipped: list[str] = []
     for item in items:
@@ -199,7 +209,7 @@ def plan(root: Path, items: list[dict], library_type: str) -> tuple[list[Move], 
         if library_type == "shows" and kind != "show":
             raise ValueError(f"Expected show item in shows library: {item}")
 
-        src = resolve_top_level_source(root, str(item["source"]))
+        src = resolve_top_level_source(root, item["source"])
         if not src.exists():
             raise FileNotFoundError(f"Source not found: {src}")
         canonical = canonical_name(item)
@@ -227,15 +237,12 @@ def plan(root: Path, items: list[dict], library_type: str) -> tuple[list[Move], 
 
 
 def validate_moves(moves: Iterable[Move], root: Path) -> None:
+    root = root.resolve()
     moves = list(moves)
     dests: dict[Path, Path] = {}
     for move in moves:
-        src_resolved = move.src.resolve(strict=False)
-        dst_resolved = move.dst.resolve(strict=False)
-        if not is_relative_to(src_resolved, root):
-            raise ValueError(f"Move source escapes the library root: {move.src}")
-        if not is_relative_to(dst_resolved, root):
-            raise ValueError(f"Move destination escapes the library root: {move.dst}")
+        require_path_within_root(move.src, root, "Move source")
+        require_path_within_root(move.dst, root, "Move destination")
         if move.dst in dests and dests[move.dst] != move.src:
             raise FileExistsError(f"Two sources target {move.dst}: {dests[move.dst]} and {move.src}")
         dests[move.dst] = move.src
@@ -245,9 +252,15 @@ def validate_moves(moves: Iterable[Move], root: Path) -> None:
             raise FileExistsError(f"Destination exists: {move.dst}")
 
 
-def apply_moves(moves: list[Move]) -> None:
+def apply_moves(moves: list[Move], root: Path) -> None:
+    root = root.resolve()
     for move in sorted(moves, key=lambda m: len(m.src.parts), reverse=True):
+        # Re-check immediately before mutation so a changed symlink cannot
+        # redirect an already-reviewed plan outside the library root.
+        require_path_within_root(move.src, root, "Move source")
+        require_path_within_root(move.dst, root, "Move destination")
         move.dst.parent.mkdir(parents=True, exist_ok=True)
+        require_path_within_root(move.dst, root, "Move destination")
         unique_path(move.dst)
         shutil.move(str(move.src), str(move.dst))
 
@@ -287,7 +300,7 @@ def main() -> int:
     print(f"mode={'execute' if args.execute else 'dry-run'}")
 
     if args.execute:
-        apply_moves(moves)
+        apply_moves(moves, root)
         print(f"applied_moves={len(moves)}")
     return 0
 
