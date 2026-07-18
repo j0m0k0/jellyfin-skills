@@ -26,7 +26,7 @@ Only touch skipped folders if the user explicitly asks to normalize internals to
 1. Inspect the target root with `find` or `rg --files`. Count videos, files, and top-level entries before changing anything.
 2. Classify the root as `movies`, `shows`, or ask if it is ambiguous. Do not mix movie and show rules unless the user explicitly has a mixed library.
 3. Build a reviewed mapping for every non-canonical target:
-   - `source`: current single top-level folder or file name relative to the root. Do not use absolute paths, nested paths, symlinks that resolve outside the root, `.` or `..`.
+   - `source`: current single top-level folder or file name relative to the root. Do not use absolute paths, nested paths, symlinks, `.` or `..`.
    - `type`: `movie` or `show`.
    - `title`: canonical provider title.
    - `year`: first release year.
@@ -108,6 +108,6 @@ Keep mappings in a temporary file near the working folder or in `/tmp`. Do not s
 
 `scripts/jellyfin_media_plan.py` is a conservative planner/executor, not a metadata resolver. It does not look up IMDb IDs. It expects a reviewed mapping and aborts on collisions.
 
-The script accepts only single top-level `source` names and validates that every source and destination resolves inside the library root before execution. Do not bypass this with shell moves for mapping-driven operations.
+The script accepts only single top-level, non-symlink `source` names and validates that every source and destination resolves inside the library root both during review and immediately before each move. Do not bypass this with shell moves for mapping-driven operations.
 
 By default, the script safely handles top-level canonicalization and top-level movie files. It skips already-canonical folders. To ask it to normalize internals of an already-canonical movie folder, add `"normalize": true` to that mapping item; only do this after inspecting the folder. Show internals require manual review because episode layouts and sidecars vary. If the media layout is unusual, inspect manually and adjust rather than forcing the script.
